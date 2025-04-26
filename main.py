@@ -1,14 +1,17 @@
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Form
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
+templates = Jinja2Templates(directory="templates")
 
+@app.get("/", response_class=HTMLResponse)
+async def get_form(request: Request):
+    return templates.TemplateResponse("form.html", {"request": request})
 
-@app.get("/")
-async def root():
-    return {"message": "Hello World"}
-
-@app.get("/items/{item_id}")
-def read_item(item_id: int, q: Optional[str] = None):
-    return {"item_id": item_id, "q": q}
+@app.post("/submit", response_class=HTMLResponse)
+async def handle_form(request: Request, answer: str = Form(...)):
+    # Process the answer and generate the next question or profile
+    return templates.TemplateResponse("result.html", {"request": request, "answer": answer})
