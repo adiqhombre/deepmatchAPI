@@ -36,9 +36,9 @@ with open("ed0_system_prompt.txt", encoding="utf-8") as f:
 # OpenAI client
 # —————————————————————————————
 client = AzureOpenAI(
-    api_key    = os.getenv("AZURE_OPENAI_KEY"),
-    api_version= "2024-02-15-preview",
-    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    api_key=os.getenv("AZURE_OPENAI_KEY"),
+    api_version=os.getenv("AZURE_API_VERSION"),
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
 )
 DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT")
 
@@ -73,7 +73,7 @@ async def start_session():
         "turn": 0
     }
     resp = client.chat.completions.create(
-        engine      = DEPLOYMENT,
+        model      = DEPLOYMENT,
         messages    = sessions[session_id]["history"] + [
             {"role": "user", "content": "Starte die Profil-Erstellung mit deiner ersten Frage."}
         ],
@@ -96,7 +96,7 @@ async def message(payload: dict):
 
     if state["turn"] < MAX_TURNS:
         resp = client.chat.completions.create(
-            engine      = DEPLOYMENT,
+            model      = DEPLOYMENT,
             messages    = state["history"],
             temperature = 0.7
         )
@@ -106,7 +106,7 @@ async def message(payload: dict):
 
     # final summary / JSON emission
     resp = client.chat.completions.create(
-        engine      = DEPLOYMENT,
+        model      = DEPLOYMENT,
         messages    = state["history"] + [
             {"role": "user", "content":
              "Bitte fasse zusammen: Wenn noch Infos fehlen, frage; "
@@ -123,4 +123,3 @@ async def message(payload: dict):
         done = False
     state["history"].append({"role": "assistant", "content": raw})
     return {"reply": raw, "done": done, "profile": profile}
-
