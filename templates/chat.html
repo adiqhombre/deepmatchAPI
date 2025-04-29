@@ -35,7 +35,7 @@
     }
 
     async function start() {
-      const res = await fetch("/start_session", { method: "POST" });
+      const res = await fetch("/api/start", { method: "POST" });
       const data = await res.json();
       sessionId = data.session_id;
       appendBubble(data.reply, "ed0");
@@ -43,14 +43,17 @@
 
     async function send() {
       const text = input.value.trim();
-      if (!text) return;
+      if (!text || !sessionId) return;
+
       appendBubble(text, "user");
       input.value = "";
-      const res = await fetch("/message", {
+
+      const res = await fetch("/api/message", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: sessionId, user_input: text })
       });
+
       const data = await res.json();
       appendBubble(data.reply, "ed0");
 
@@ -65,7 +68,7 @@
     document.getElementById("sendBtn").addEventListener("click", send);
     input.addEventListener("keypress", e => e.key === "Enter" && send());
 
-    // kick off
+    // Start session when the page loads
     start();
   </script>
 </body>

@@ -3,12 +3,16 @@ import uuid
 import secrets
 import json
 
+from db_models import QA_Pair, Profile, Base
+from pydantic_models import StartSessionResponse, MessageRequest, MessageResponse
 from fastapi import FastAPI, Request, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
+from sqlalchemy.orm import Session
+from db_setup import get_db
 from openai import AzureOpenAI
 
 # —————————————————————————————
@@ -37,10 +41,10 @@ with open("ed0_system_prompt.txt", encoding="utf-8") as f:
 # —————————————————————————————
 client = AzureOpenAI(
     api_key=os.getenv("AZURE_OPENAI_KEY"),
-    api_version=os.getenv("AZURE_API_VERSION"),
+    api_version="2024-12-01-preview",
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
 )
-DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+DEPLOYMENT = "gpt-4o"
 
 # —————————————————————————————
 # FastAPI setup
@@ -60,59 +64,68 @@ MAX_TURNS = 10
 # Routes
 # —————————————————————————————
 
-@app.get("/", response_class=HTMLResponse, dependencies=[Depends(authenticate)])
+@app.get("/chat", response_class=HTMLResponse, dependencies=[Depends(authenticate)])
 async def chat_page(request: Request):
     return templates.TemplateResponse("chat.html", {"request": request})
-# … (imports & setup unchanged) …
 
-@app.post("/start_session", dependencies=[Depends(authenticate)])
-async def start_session():
+@app.post("/api/start", response_model=StartSessionResponse, dependencies=[Depends(authenticate)])
+async def start_session(db: Session = Depends(get_db)):
     session_id = str(uuid.uuid4())
     sessions[session_id] = {
         "history": [{"role": "system", "content": SYSTEM_PROMPT_CONTENT}],
         "turn": 0
     }
     resp = client.chat.completions.create(
-        model      = DEPLOYMENT,
-        messages    = sessions[session_id]["history"] + [
+        model=DEPLOYMENT,
+        messages=sessions[session_id]["history"] + [
             {"role": "user", "content": "Starte die Profil-Erstellung mit deiner ersten Frage."}
         ],
-        temperature = 0.7
+        temperature=0.7
     )
     first_q = resp.choices[0].message.content
     sessions[session_id]["history"].append({"role": "assistant", "content": first_q})
+
+    qa_entry = QA_Pair(session_id=session_id, question="Starte die Profil-Erstellung mit deiner ersten Frage.", answer=first_q)
+    db.add(qa_entry)
+    db.commit()
+
     return {"session_id": session_id, "reply": first_q, "done": False}
 
-@app.post("/message", dependencies=[Depends(authenticate)])
-async def message(payload: dict):
-    session_id = payload.get("session_id")
-    user_input = payload.get("user_input", "").strip()
+@app.post("/api/message", response_model=MessageResponse, dependencies=[Depends(authenticate)])
+async def message(payload: MessageRequest, db: Session = Depends(get_db)):
+    session_id = payload.session_id
+    user_input = payload.user_input.strip()
     state = sessions.get(session_id)
     if not state:
-        return JSONResponse({"error": "Ungültige Session"}, status_code=400)
+        raise HTTPException(status_code=400, detail="Ungültige Session")
 
     state["history"].append({"role": "user", "content": user_input})
     state["turn"] += 1
 
     if state["turn"] < MAX_TURNS:
         resp = client.chat.completions.create(
-            model      = DEPLOYMENT,
-            messages    = state["history"],
-            temperature = 0.7
+            model=DEPLOYMENT,
+            messages=state["history"],
+            temperature=0.7
         )
         reply = resp.choices[0].message.content
         state["history"].append({"role": "assistant", "content": reply})
-        return {"reply": reply, "done": False}
+
+        qa_entry = QA_Pair(session_id=session_id, question=user_input, answer=reply)
+        db.add(qa_entry)
+        db.commit()
+
+        return {"reply": reply, "done": False, "profile": None}
 
     # final summary / JSON emission
     resp = client.chat.completions.create(
-        model      = DEPLOYMENT,
-        messages    = state["history"] + [
+        model=DEPLOYMENT,
+        messages=state["history"] + [
             {"role": "user", "content":
              "Bitte fasse zusammen: Wenn noch Infos fehlen, frage; "
              "ansonsten gib das Profil als JSON aus."}
         ],
-        temperature = 0
+        temperature=0
     )
     raw = resp.choices[0].message.content.strip()
     try:
@@ -122,4 +135,10 @@ async def message(payload: dict):
         profile = None
         done = False
     state["history"].append({"role": "assistant", "content": raw})
+
+    if profile:
+        profile_entry = Profile(session_id=session_id, profile_data=profile)
+        db.add(profile_entry)
+        db.commit()
+
     return {"reply": raw, "done": done, "profile": profile}
